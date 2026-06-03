@@ -1,0 +1,13 @@
+{
+  "totalSeconds": 0,
+  "smokeBreaks": 0,
+  "dailyData": [
+    { "day": "Mon", "hoursWorked": 0, "smokeBreaks": 0 },
+    { "day": "Tue", "hoursWorked": 0, "smokeBreaks": 0 },
+    { "day": "Wed", "hoursWorked": 0, "smokeBreaks": 0 },
+    { "day": "Thu", "hoursWorked": 0, "smokeBreaks": 0 },
+    { "day": "Fri", "hoursWorked": 0, "smokeBreaks": 0 },
+    { "day": "Sat", "hoursWorked": 0, "smokeBreaks": 0 },
+    { "day": "Sun", "hoursWorked": 0, "smokeBreaks": 0 }
+  ]
+}

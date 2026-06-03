@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Work Monitor | Google Style</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Google Sans', sans-serif;
+            background-color: #131314;
+            color: #e3e3e3;
+        }
+        .google-card {
+            background-color: #1e1f20;
+            border-radius: 28px;
+            transition: all 0.3s ease;
+        }
+        .google-card:hover {
+            background-color: #28292a;
+        }
+        .btn-primary {
+            background-color: #a8c7fa;
+            color: #062e6f;
+            border-radius: 100px;
+            transition: transform 0.1s;
+        }
+        .btn-primary:active {
+            transform: scale(0.95);
+        }
+        .btn-outline {
+            border: 1px solid #8e918f;
+            border-radius: 100px;
+            color: #a8c7fa;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <!-- Header -->
+    <div class="max-w-6xl mx-auto flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-2xl font-medium text-[#e3e3e3]">Work Dashboard</h1>
+            <p class="text-sm text-[#c4c7c5]">Monitoring your 400h goal</p>
+        </div>
+        <div id="statusIndicator" class="flex items-center gap-2 px-4 py-2 rounded-full bg-[#37393b]">
+            <div class="w-3 h-3 rounded-full bg-gray-500 animate-pulse" id="statusDot"></div>
+            <span class="text-sm font-medium" id="statusText">Idle</span>
+        </div>
+    </div>
+
+    <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        <!-- Main Control Card -->
+        <div class="google-card p-8 md:col-span-2 flex flex-col justify-between">
+            <div>
+                <h2 class="text-lg font-medium mb-1">Current Session</h2>
+                <div class="text-6xl font-bold tracking-tighter my-4" id="timerDisplay">00:00:00</div>
+            </div>
+            <div class="flex gap-4 mt-4">
+                <button id="startStopBtn" onclick="toggleWork()" class="btn-primary px-8 py-4 font-bold text-lg flex-1">
+                    Start Working
+                </button>
+                <button onclick="addSmokingBreak()" class="btn-outline px-6 py-4 font-medium flex-1">
+                    + Smoking Break
+                </button>
+            </div>
+        </div>
+
+        <!-- Small Box: Smoking Breaks -->
+        <div class="google-card p-8 flex flex-col items-center justify-center text-center">
+            <h2 class="text-[#c4c7c5] text-sm font-medium mb-2 uppercase tracking-widest">Smoking Breaks</h2>
+            <div class="text-7xl font-light text-[#f2b8b5]" id="smokeCount">0</div>
+            <p class="text-[#8e918f] mt-2 text-sm">Today's count</p>
+        </div>
+
+        <!-- Big Line Chart -->
+        <div class="google-card p-8 md:col-span-2">
+            <h2 class="text-lg font-medium mb-6">Working Hours Trend</h2>
+            <canvas id="lineChart" height="150"></canvas>
+        </div>
+
+        <!-- Donut Chart: 400 Hour Progress -->
+        <div class="google-card p-8 flex flex-col items-center">
+            <h2 class="text-lg font-medium mb-4 text-center">Progress to 400h</h2>
+            <div class="relative w-full aspect-square">
+                <canvas id="donutChart"></canvas>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <span class="text-3xl font-bold" id="percentText">0%</span>
+                    <span class="text-[10px] text-[#8e918f]">COMPLETE</span>
+                </div>
+            </div>
+            <p class="mt-4 text-sm text-[#c4c7c5]" id="hoursRemainingText">400 hours remaining</p>
+        </div>
+
+    </div>
+
+    <script>
+        // Data State
+        let isWorking = false;
+        let startTime;
+        let totalSecondsWorked = parseFloat(localStorage.getItem('totalSeconds')) || 0;
+        let smokeBreaks = parseInt(localStorage.getItem('smokeBreaks')) || 0;
+        let workHistory = JSON.parse(localStorage.getItem('workHistory')) || [0, 0, 0, 0, 0, 0, 0]; // Last 7 days
+
+        // UI Elements
+        const timerDisplay = document.getElementById('timerDisplay');
+        const smokeDisplay = document.getElementById('smokeCount');
+        const startStopBtn = document.getElementById('startStopBtn');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        // Initialize Charts
+        let lineChart, donutChart;
+
+        function initCharts() {
+            const lineCtx = document.getElementById('lineChart').getContext('2d');
+            lineChart = new Chart(lineCtx, {
+                type: 'line',
+                data: {
+                    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                    datasets: [{
+                        label: 'Hours Worked',
+                        data: workHistory,
+                        borderColor: '#a8c7fa',
+                        backgroundColor: 'rgba(168, 199, 250, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        borderWidth: 3,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { grid: { color: '#333' }, ticks: { color: '#8e918f' } },
+                        x: { grid: { display: false }, ticks: { color: '#8e918f' } }
+                    }
+                }
+            });
+
+            const donutCtx = document.getElementById('donutChart').getContext('2d');
+            donutChart = new Chart(donutCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Done', 'Remaining'],
+                    datasets: [{
+                        data: [totalSecondsWorked / 3600, 400 - (totalSecondsWorked / 3600)],
+                        backgroundColor: ['#a8c7fa', '#37393b'],
+                        borderWidth: 0,
+                        cutout: '85%'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } }
+                }
+            });
+            updateStats();
+        }
+
+        // Logic Functions
+        function toggleWork() {
+            if (!isWorking) {
+                isWorking = true;
+                startTime = Date.now();
+                startStopBtn.innerText = "Stop Session";
+                startStopBtn.style.backgroundColor = "#f2b8b5"; // M3 Error color for Stop
+                startStopBtn.style.color = "#601410";
+                statusDot.classList.replace('bg-gray-500', 'bg-green-400');
+                statusText.innerText = "Working";
+                tick();
+            } else {
+                isWorking = false;
+                startStopBtn.innerText = "Start Working";
+                startStopBtn.style.backgroundColor = "#a8c7fa";
+                startStopBtn.style.color = "#062e6f";
+                statusDot.classList.replace('bg-green-400', 'bg-gray-500');
+                statusText.innerText = "Idle";
+                
+                // Save progress
+                saveData();
+            }
+        }
+
+        function tick() {
+            if (!isWorking) return;
+            const elapsed = Date.now() - startTime;
+            timerDisplay.innerText = new Date(elapsed).toISOString().substr(11, 8);
+            setTimeout(tick, 1000);
+        }
+
+        function addSmokingBreak() {
+            smokeBreaks++;
+            smokeDisplay.innerText = smokeBreaks;
+            localStorage.setItem('smokeBreaks', smokeBreaks);
+        }
+
+        function saveData() {
+            const elapsedSeconds = (Date.now() - startTime) / 1000;
+            totalSecondsWorked += elapsedSeconds;
+            
+            // Add to today's history (simplified logic)
+            const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
+            workHistory[todayIndex] += (elapsedSeconds / 3600);
+            
+            localStorage.setItem('totalSeconds', totalSecondsWorked);
+            localStorage.setItem('workHistory', JSON.stringify(workHistory));
+            
+            updateStats();
+        }
+
+        function updateStats() {
+            const totalHours = totalSecondsWorked / 3600;
+            const percent = Math.min((totalHours / 400) * 100, 100).toFixed(1);
+            
+            document.getElementById('percentText').innerText = percent + "%";
+            document.getElementById('hoursRemainingText').innerText = `${Math.max(400 - totalHours, 0).toFixed(1)} hours remaining`;
+            smokeDisplay.innerText = smokeBreaks;
+
+            // Update Charts
+            donutChart.data.datasets[0].data = [totalHours, Math.max(400 - totalHours, 0)];
+            lineChart.data.datasets[0].data = workHistory;
+            donutChart.update();
+            lineChart.update();
+        }
+
+        // Run on load
+        window.onload = initCharts;
+    </script>
+</body>
+</html>
