@@ -11,27 +11,47 @@ import {
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
-import initialData from './data.json';
 
-ChartJS.register(
-  Title,
-  Tooltip,
-  Legend,
-  ArcElement,
-);
+ChartJS.register(Title, Tooltip, Legend, ArcElement);
 
 const GOAL_HOURS = 400;
+const START_DATE = new Date('2026-06-01T00:00:00'); // Internship Start Date
 
-// Helper component for 8am - 6pm Weekly Timeline
-const WeeklyTimeline = ({ dailyData, isActive, sessionStartTime }) => {
-  const START_HOUR = 8;
-  const END_HOUR = 18;
+// Helper to get YYYY-MM-DD reliably based on local time
+const getLocalFormattedDate = (dateObj = new Date()) => {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+// Generates an array of 7 date strings for a given week index (0 = Week 1)
+const getWeekDates = (weekIndex) => {
+  const weekStart = new Date(START_DATE);
+  weekStart.setDate(weekStart.getDate() + (weekIndex * 7));
+  
+  const dates = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    dates.push({
+      dateStr: getLocalFormattedDate(d),
+      dayName: d.toLocaleDateString('en-US', { weekday: 'short' })
+    });
+  }
+  return dates;
+};
+
+// Helper component for 5 AM - 11 PM Weekly Timeline
+const WeeklyTimeline = ({ weekDates, dailyLogs, isActive, sessionStartTime }) => {
+  const START_HOUR = 5;
+  const END_HOUR = 23; // 11 PM
   const TOTAL_MINUTES = (END_HOUR - START_HOUR) * 60;
 
   const getPositionAndHeight = (startMs, endMs) => {
     const startDate = new Date(startMs);
     const endDate = new Date(endMs);
-    
+
     const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
     const endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
 
@@ -44,47 +64,53 @@ const WeeklyTimeline = ({ dailyData, isActive, sessionStartTime }) => {
     return { top: `${topPercentage}%`, height: `${heightPercentage}%` };
   };
 
-  const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
+  const todayStr = getLocalFormattedDate();
 
   return (
-    <div className="relative h-[300px] w-full bg-[#1e1f20] rounded-xl flex border border-gray-800">
+    <div className="relative h-[350px] w-full bg-[#1e1f20] rounded-xl flex border border-gray-800">
+      {/* Y-Axis Time Labels */}
       <div className="flex flex-col justify-between text-googleSecondary text-xs py-3 px-4 border-r border-gray-800 shrink-0 mt-8">
+        <span>5 AM</span>
         <span>8 AM</span>
-        <span>10 AM</span>
-        <span>12 PM</span>
+        <span>11 AM</span>
         <span>2 PM</span>
-        <span>4 PM</span>
-        <span>6 PM</span>
+        <span>5 PM</span>
+        <span>8 PM</span>
+        <span>11 PM</span>
       </div>
+
       <div className="flex-1 flex overflow-hidden">
-        {dailyData.map((dayData, index) => {
-          const sessions = dayData.sessions || [];
-          const isToday = index === todayIndex;
-          
+        {weekDates.map((dayInfo) => {
+          const logData = dailyLogs[dayInfo.dateStr] || { sessions: [], hoursWorked: 0, smokeBreaks: 0 };
+          const sessions = logData.sessions || [];
+          const isToday = dayInfo.dateStr === todayStr;
+
           return (
-            <div key={dayData.day} className="flex-1 flex flex-col border-r border-gray-800 last:border-0">
+            <div key={dayInfo.dateStr} className="flex-1 flex flex-col border-r border-gray-800 last:border-0">
               <div className={`text-center py-2 text-xs font-medium border-b border-gray-800 ${isToday ? 'text-googleBlue bg-googleBlue/10' : 'text-googleSecondary'}`}>
-                {dayData.day}
+                {dayInfo.dayName}
               </div>
               <div className="relative flex-1 mx-1 my-3 bg-[#28292a] rounded-md">
+                {/* Render historical sessions */}
                 {sessions.map((session, i) => {
                   const { top, height } = getPositionAndHeight(session.start, session.end);
                   if (height === '0%') return null;
                   return (
-                    <div 
-                      key={i} 
-                      className="absolute left-0 w-full bg-googleBlue/70 border-l-2 border-googleBlue"
+                    <div
+                      key={i}
+                      className="absolute left-0 w-full bg-googleBlue/70 border-l-2 border-googleBlue rounded-sm"
                       style={{ top, height }}
                     />
                   );
                 })}
+                {/* Render live active session pulse */}
                 {isToday && isActive && sessionStartTime && (
                   (() => {
                     const { top, height } = getPositionAndHeight(sessionStartTime, Date.now());
                     if (height === '0%') return null;
                     return (
-                      <div 
-                        className="absolute left-0 w-full bg-green-500/50 border-l-2 border-green-400 animate-pulse"
+                      <div
+                        className="absolute left-0 w-full bg-green-500/50 border-l-2 border-green-400 animate-pulse rounded-sm z-10"
                         style={{ top, height }}
                       />
                     );
@@ -106,22 +132,20 @@ export default function App() {
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [smokeBreaks, setSmokeBreaks] = useState(0);
   
-  const [weeksData, setWeeksData] = useState([]);
+  const [dailyLogs, setDailyLogs] = useState({});
   const [activeWeekIndex, setActiveWeekIndex] = useState(0);
   const [currentWeekIndex, setCurrentWeekIndex] = useState(0);
 
   const [isLoading, setIsLoading] = useState(true);
-
   const timerRef = useRef(null);
 
   useEffect(() => {
-    // June 1, 2026 is the start date
-    const startDate = new Date('2026-06-01T00:00:00+02:00').getTime();
+    // Determine current week based on start date
     const now = Date.now();
-    let diffDays = Math.floor((now - startDate) / (1000 * 60 * 60 * 24));
+    let diffDays = Math.floor((now - START_DATE.getTime()) / (1000 * 60 * 60 * 24));
     let weekIndex = Math.floor(diffDays / 7);
     if (weekIndex < 0) weekIndex = 0;
-    if (weekIndex > 7) weekIndex = 7;
+    if (weekIndex > 7) weekIndex = 7; // Cap at 8 weeks
     setCurrentWeekIndex(weekIndex);
     setActiveWeekIndex(weekIndex);
   }, []);
@@ -133,58 +157,24 @@ export default function App() {
         const snapshot = await getDoc(docRef);
         if (snapshot.exists()) {
           const data = snapshot.data();
+          setDailyLogs(data.dailyLogs || {});
           setTotalSeconds(data.totalSeconds || 0);
           setSmokeBreaks(data.smokeBreaks || 0);
-          
-          let fetchedWeeks = data.weeks;
-          
-          // Migrate schema if needed
-          if (!fetchedWeeks) {
-             fetchedWeeks = initialData.weeks;
-             await setDoc(docRef, {
-               totalSeconds: initialData.totalSeconds,
-               smokeBreaks: data.smokeBreaks || 0,
-               weeks: fetchedWeeks,
-               isActive: false,
-               sessionStartTime: null
-             }, { merge: true });
-             setTotalSeconds(initialData.totalSeconds);
-          }
-          
-          setWeeksData(fetchedWeeks);
           setIsActive(data.isActive || false);
           setSessionStartTime(data.sessionStartTime || null);
         } else {
-          await setDoc(docRef, {
-            totalSeconds: initialData.totalSeconds,
-            smokeBreaks: 0,
-            weeks: initialData.weeks,
-            isActive: false,
-            sessionStartTime: null
-          });
-          setWeeksData(initialData.weeks);
-          setTotalSeconds(initialData.totalSeconds);
+          // Fallback if document doesn't exist
+          setDailyLogs({});
         }
       } catch (error) {
-        console.error("Firebase error:", error);
-        setWeeksData(initialData.weeks);
-        setTotalSeconds(initialData.totalSeconds);
+        console.error("Firebase fetch error:", error);
       }
       setIsLoading(false);
     };
-
     fetchData();
   }, []);
 
-  const updateFirebase = async (updates) => {
-    try {
-      const docRef = doc(db, 'stats', 'internship');
-      await setDoc(docRef, updates, { merge: true });
-    } catch (err) {
-      console.error("Error updating Firebase:", err);
-    }
-  };
-
+  // Sync Timer Seamlessly
   useEffect(() => {
     if (isActive && sessionStartTime) {
       setSessionSeconds(Math.floor((Date.now() - sessionStartTime) / 1000));
@@ -198,63 +188,82 @@ export default function App() {
     return () => clearInterval(timerRef.current);
   }, [isActive, sessionStartTime]);
 
-  const toggleTimer = () => {
-    if (isActive) {
-      const elapsed = sessionStartTime ? Math.floor((Date.now() - sessionStartTime) / 1000) : 0;
-      if (elapsed > 0 && weeksData.length > 0) {
-        const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
-        const newWeeks = [...weeksData];
-        const currentWeek = [...newWeeks[currentWeekIndex]];
-        currentWeek[todayIndex] = {
-          ...currentWeek[todayIndex],
-          hoursWorked: currentWeek[todayIndex].hoursWorked + (elapsed / 3600),
-          sessions: [...(currentWeek[todayIndex].sessions || []), { start: sessionStartTime, end: Date.now() }]
-        };
-        newWeeks[currentWeekIndex] = currentWeek;
-        
-        setWeeksData(newWeeks);
-        setTotalSeconds(prev => prev + elapsed);
-        setIsActive(false);
-        setSessionStartTime(null);
+  const updateFirebase = async (updates) => {
+    try {
+      const docRef = doc(db, 'stats', 'internship');
+      await setDoc(docRef, updates, { merge: true });
+    } catch (err) {
+      console.error("Firebase update error:", err);
+    }
+  };
 
-        updateFirebase({ 
-          weeks: newWeeks, 
-          totalSeconds: totalSeconds + elapsed,
-          isActive: false,
-          sessionStartTime: null
-        });
-      } else {
-        setIsActive(false);
-        setSessionStartTime(null);
-        updateFirebase({ isActive: false, sessionStartTime: null });
+  const toggleTimer = () => {
+    const todayStr = getLocalFormattedDate();
+    const now = Date.now();
+
+    if (isActive) {
+      // STOP TIMER
+      const elapsed = sessionStartTime ? Math.floor((now - sessionStartTime) / 1000) : 0;
+      
+      const updatedLogs = { ...dailyLogs };
+      
+      // If today doesn't exist in DB yet, initialize it cleanly
+      if (!updatedLogs[todayStr]) {
+        updatedLogs[todayStr] = {
+          date: todayStr,
+          dayName: new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+          hoursWorked: 0,
+          smokeBreaks: 0,
+          sessions: []
+        };
       }
+
+      updatedLogs[todayStr] = {
+        ...updatedLogs[todayStr],
+        hoursWorked: updatedLogs[todayStr].hoursWorked + (elapsed / 3600),
+        sessions: [...updatedLogs[todayStr].sessions, { start: sessionStartTime, end: now }]
+      };
+
+      setDailyLogs(updatedLogs);
+      setTotalSeconds(prev => prev + elapsed);
+      setIsActive(false);
+      setSessionStartTime(null);
+
+      updateFirebase({
+        dailyLogs: updatedLogs,
+        totalSeconds: totalSeconds + elapsed,
+        isActive: false,
+        sessionStartTime: null
+      });
+
     } else {
-      const now = Date.now();
+      // START TIMER
       setIsActive(true);
       setSessionStartTime(now);
       updateFirebase({ isActive: true, sessionStartTime: now });
     }
   };
-  
+
   const addSmokeBreak = () => {
+    const todayStr = getLocalFormattedDate();
     const updatedBreaks = smokeBreaks + 1;
     setSmokeBreaks(updatedBreaks);
-    
-    if (weeksData.length > 0) {
-      const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
-      const newWeeks = [...weeksData];
-      const currentWeek = [...newWeeks[currentWeekIndex]];
-      currentWeek[todayIndex] = {
-        ...currentWeek[todayIndex],
-        smokeBreaks: currentWeek[todayIndex].smokeBreaks + 1
+
+    const updatedLogs = { ...dailyLogs };
+    if (!updatedLogs[todayStr]) {
+      updatedLogs[todayStr] = {
+        date: todayStr,
+        dayName: new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+        hoursWorked: 0,
+        smokeBreaks: 0,
+        sessions: []
       };
-      newWeeks[currentWeekIndex] = currentWeek;
-      
-      setWeeksData(newWeeks);
-      updateFirebase({ smokeBreaks: updatedBreaks, weeks: newWeeks });
-    } else {
-      updateFirebase({ smokeBreaks: updatedBreaks });
     }
+    
+    updatedLogs[todayStr].smokeBreaks += 1;
+    setDailyLogs(updatedLogs);
+
+    updateFirebase({ smokeBreaks: updatedBreaks, dailyLogs: updatedLogs });
   };
 
   const formatTime = (seconds) => {
@@ -267,7 +276,7 @@ export default function App() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-googleBg text-googleText flex items-center justify-center font-bold text-xl">
-        Connecting to Firebase...
+        Connecting to Cloud Uplink...
       </div>
     );
   }
@@ -275,16 +284,17 @@ export default function App() {
   const displayTotalSeconds = totalSeconds + (isActive ? sessionSeconds : 0);
   const totalHoursDone = (displayTotalSeconds / 3600).toFixed(2);
 
-  const displayDailyData = weeksData[activeWeekIndex] ? [...weeksData[activeWeekIndex]] : [];
-  const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
-  const isViewingCurrentWeek = activeWeekIndex === currentWeekIndex;
-
-  if (isActive && displayDailyData.length > 0 && isViewingCurrentWeek) {
-    displayDailyData[todayIndex] = {
-      ...displayDailyData[todayIndex],
-      hoursWorked: displayDailyData[todayIndex].hoursWorked + (sessionSeconds / 3600)
-    };
-  }
+  // Get data for the currently selected week dropdown
+  const weekDates = getWeekDates(activeWeekIndex);
+  
+  // Calculate live hours for the table if active today
+  const getDisplayHours = (dateStr) => {
+    const baseHours = dailyLogs[dateStr]?.hoursWorked || 0;
+    if (isActive && dateStr === getLocalFormattedDate()) {
+      return baseHours + (sessionSeconds / 3600);
+    }
+    return baseHours;
+  };
 
   const donutData = {
     labels: ['Completed', 'Remaining'],
@@ -300,19 +310,15 @@ export default function App() {
     responsive: true,
     maintainAspectRatio: false,
     cutout: '50%',
-    plugins: { 
-      legend: { 
-        display: true, 
-        position: 'bottom',
-        labels: { color: '#e3e3e3' }
-      } 
+    plugins: {
+      legend: { display: true, position: 'bottom', labels: { color: '#e3e3e3' } }
     }
   };
 
   return (
     <div className="min-h-screen bg-googleBg text-googleText p-4 md:p-10">
       <div className="max-w-6xl mx-auto">
-        
+
         <header className="flex justify-between items-center mb-10">
           <div>
             <h1 className="text-3xl font-medium tracking-tight">VaultBoy's Internship Tracker</h1>
@@ -325,7 +331,6 @@ export default function App() {
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-          
           <div className="md:col-span-2 bg-googleCard p-8 rounded-[32px] flex flex-col justify-between min-h-[300px]">
             <div>
               <span className="text-googleSecondary flex items-center gap-2 text-sm uppercase tracking-widest font-medium">
@@ -335,7 +340,7 @@ export default function App() {
                 {formatTime(sessionSeconds)}
               </div>
             </div>
-            
+
             <div className="flex gap-4 mt-8">
               <button 
                 onClick={toggleTimer}
@@ -380,11 +385,12 @@ export default function App() {
                   ))}
                 </select>
               </div>
-              <span className="text-sm text-googleSecondary">8 AM - 6 PM</span>
+              <span className="text-sm text-googleSecondary">5 AM - 11 PM</span>
             </div>
             <WeeklyTimeline 
-              dailyData={displayDailyData} 
-              isActive={isViewingCurrentWeek ? isActive : false} 
+              weekDates={weekDates}
+              dailyLogs={dailyLogs} 
+              isActive={isActive} 
               sessionStartTime={sessionStartTime} 
             />
           </div>
@@ -399,7 +405,6 @@ export default function App() {
               <div className="text-xs text-googleSecondary uppercase tracking-widest">Total Hours Recorded</div>
             </div>
           </div>
-
         </div>
 
         <div className="bg-googleCard p-8 rounded-[32px]">
@@ -408,31 +413,38 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-gray-700">
+                  <th className="py-4 px-4 text-googleSecondary font-medium">Date</th>
                   <th className="py-4 px-4 text-googleSecondary font-medium">Day</th>
                   <th className="py-4 px-4 text-googleSecondary font-medium">Time Worked (Hours)</th>
                   <th className="py-4 px-4 text-googleSecondary font-medium">Smoke Breaks</th>
                 </tr>
               </thead>
               <tbody>
-                {displayDailyData.map((data, index) => (
-                  <tr key={data.day} className="border-b border-gray-800 hover:bg-white/5 transition-colors">
-                    <td className="py-4 px-4 font-medium">{data.day}</td>
-                    <td className="py-4 px-4">
-                      {data.hoursWorked > 0 ? (
-                        <span className="text-googleBlue font-bold">{data.hoursWorked.toFixed(2)}h</span>
-                      ) : (
-                        <span className="text-gray-500">0.00h</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4">
-                      {data.smokeBreaks > 0 ? (
-                        <span className="text-orange-300 font-bold">{data.smokeBreaks}</span>
-                      ) : (
-                        <span className="text-gray-500">0</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {weekDates.map((dayInfo) => {
+                  const log = dailyLogs[dayInfo.dateStr] || { smokeBreaks: 0 };
+                  const hours = getDisplayHours(dayInfo.dateStr);
+                  
+                  return (
+                    <tr key={dayInfo.dateStr} className="border-b border-gray-800 hover:bg-white/5 transition-colors">
+                      <td className="py-4 px-4 text-gray-400">{dayInfo.dateStr}</td>
+                      <td className="py-4 px-4 font-medium">{dayInfo.dayName}</td>
+                      <td className="py-4 px-4">
+                        {hours > 0 ? (
+                          <span className="text-googleBlue font-bold">{hours.toFixed(2)}h</span>
+                        ) : (
+                          <span className="text-gray-500">0.00h</span>
+                        )}
+                      </td>
+                      <td className="py-4 px-4">
+                        {log.smokeBreaks > 0 ? (
+                          <span className="text-orange-300 font-bold">{log.smokeBreaks}</span>
+                        ) : (
+                          <span className="text-gray-500">0</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
